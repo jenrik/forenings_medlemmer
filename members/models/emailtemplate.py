@@ -1,12 +1,17 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 from django.db import models
+from members.models.emailitem import EmailItem
+from members.models.person import Person
+from members.models.department import Department
+from members.models.family import Family
 import members.models.emailitem
 import members.models.person
 import members.models.department
 import members.models.family
 from django.conf import settings
 from django.template import Engine, Context
+from functools import reduce
 
 
 class EmailTemplate(models.Model):
@@ -41,56 +46,66 @@ class EmailTemplate(models.Model):
         if(type(recievers) is not list):
             recievers = [recievers]
 
+        for reciever in recievers:
+            if type(reciever) is members.models.person.Person:
+                if reciever.family in recievers and reciever.email == reciever.family.email:
+                    recievers.remove(reciever.family)
+
+        map_addresses = {}
+        # build map mapping email to person, family and department
+        for reciever in recievers:
+            if type(reciever) is Person \
+                    and not reciever.family.dont_send_mails \
+                    and reciever.email is not ""\
+                    and receiver in map_addresses.get(receiver.email, {}).get("person", []):
+                map_addresses.setdefault(receiver.email, {}).setdefault("person", []).append(reciever)
+                if reciever.emil is not "" and receiver in map_addresses.get(receiver.email, {}).get("family", []):
+                    # Adds family such that it can be used in the template
+                    map_addresses.setdefault(receiver.email, {}).setdefault("family", []).append(reciever)
+            elif type(reciever) is Family\
+                    and not reciever.dont_send_mails\
+                    and reciever.emil is not ""\
+                    and receiver in map_addresses.get(receiver.email, {}).get("family", []):
+                map_addresses.setdefault(receiver.email, {}).setdefault("family", []).append(reciever)
+            elif type(reciever) is Department\
+                    and reciever.responsible_contact is not "" \
+                    and receiver in map_addresses.get(receiver.responsible_contact, {}).get("department", []):
+                map_addresses.setdefault(receiver.responsible_contact, {}).setdefault("department", []).append(reciever)
+            else:
+                raise Exception("Reciever must be of type Person, Family or Department not " + str(type(reciever)))
+
         emails = []
 
-        for reciever in recievers:
+        for destination_address, entities in recievers.items():
             # each reciever must be Person, Family or string (email)
 
             # Note - string specifically removed. We use family.dont_send_mails to make sure
             # we dont send unwanted mails.
 
-            if type(reciever) not in (members.models.person.Person,
-                                      members.models.family.Family,
-                                      members.models.department.Department):
-                raise Exception("Reciever must be of type Person or Family not " + str(type(reciever)))
 
-            # figure out reciever
-            if(type(reciever) is str):
-                #check if family blacklisted. (TODO)
-                destination_address = reciever
-            elif(type(reciever) is members.models.person.Person):
-                #skip if family does not want email
-                if reciever.family.dont_send_mails:
-                    continue
-                context['person'] = reciever
-                destination_address = reciever.email
-            elif(type(reciever) is members.models.family.Family):
-                #skip if family does not want email
-                if reciever.dont_send_mails:
-                    continue
-                context['family'] = reciever
-                destination_address = reciever.email
-            elif(type(reciever) is members.models.department.Department):
-                context['department'] = reciever
-                destination_address = reciever.responsible_contact
+            for k, v in entities.items():
+                context[k] = v
 
             # figure out Person and Family is applicable
-            if(type(reciever) is members.models.person.Person):
-                person = reciever
+            if "person" in entities.keys():
+                person = entities["person"]
             elif('person' in context):
-                person = context['person']
+                person = context["person"]
+                if type(person) is not list:
+                    person = [person]
             else:
-                person=None
+                person = None
 
             # figure out family
-            if(type(reciever) is members.models.family.Family):
-                family = reciever
-            elif(type(reciever) is members.models.person.Person):
-                family = reciever.family
-            elif('family' in context):
+            if "family" in entities.keys:
+                family = entities["family"]
+            elif 'family' in context:
                 family = context['family']
+                if type(family) is not list:
+                    family = [family]
             else:
-                family=None
+                family = None
+            # Family is always set if their is a person, so their is no need to extract family from "person"
 
             # figure out activity
             if 'activity' in context:
@@ -99,16 +114,18 @@ class EmailTemplate(models.Model):
                 activity = None
 
             # department
-            if 'department' in context:
+            if "department" in entities.keys():
+                department = entities["department"]
+            elif 'department' in context:
                 department = context['department']
+                if type(department) is not list:
+                    department = [department]
             else:
                 department = None
 
             # fill out known usefull stuff for context
             if 'email' not in context: context['email'] = destination_address
             if 'site' not in context: context['site'] = settings.BASE_URL
-            if 'person' not in context: context['person'] = person
-            if 'family' not in context: context['family'] = family
 
             # Make real context from dict
             context = Context(context)
@@ -122,16 +139,16 @@ class EmailTemplate(models.Model):
             text_content = text_template.render(context)
             subject_content = subject_template.render(context)
 
-            email = members.models.emailitem.EmailItem.objects.create(template = self,
+            email = EmailItem.objects.create(
+                template = self,
                 reciever = destination_address,
-                person=person,
-                family=family,
-                activity=activity,
-                department = department,
+                person = person, # ToDo person is a list not a single instance
+                family = family, # ToDo family is a list not a single instance
+                activity = activity,
+                department = department, # ToDo department is a lsit not a single instance
                 subject = subject_content,
                 body_html = html_content,
                 body_text = text_content)
             email.save()
             emails.append(email)
         return emails
-
