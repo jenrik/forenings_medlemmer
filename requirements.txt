@@ -7,12 +7,6 @@ django-cron
 git+https://github.com/QuickPay/quickpay-python-client.git@c12dd639b86765507b8da2f3d9651c2ede57db3e#egg=quickpay-api-client
 pytz
 django-flat-responsive
-
-# useful non-production packages (install manually)
-#django-debug-toolbar
-#pylint
-
-# Django REST
 djangorestframework
 markdown
 django-filter
